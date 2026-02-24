@@ -1,46 +1,59 @@
+"use strict";
+
+import http from "http";
+import express from "express";
 import { Server } from "socket.io";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
+import cookieParser from "cookie-parser";
+import cors from "cors";
+import helmet from "helmet";
+import mongoSanitize from "express-mongo-sanitize";
+
+import { errorHandler } from "./middleware/errorHandler";
+import authRoutes from "./routes/authRoutes";
+import documentRoutes from "./routes/documentRoutes";
+import { registerDocumentHandlers } from "./sockets/documentHandlers";
+
 dotenv.config();
-import { getAllDocuments, findOrCreateDocument, updateDocument } from "./controllers/documentController" ;
 
-const PORT = Number(process.env.PORT || 3000) ;
+const PORT = Number(process.env.PORT || 3000);
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
 
-/** Connect to MongoDB */
-mongoose.connect(process.env.DATABASE_URL || "", { dbName: "Google-Docs" })
-.then(() => { console.log("Database connected.");})
-.catch((error) => { console.log("DB connection failed. " + error);}) ;
+mongoose
+  .connect(process.env.DATABASE_URL || "", { dbName: "collabowrite" })
+  .then(() => console.log("Database connected."))
+  .catch((err) => console.error("DB connection failed.", err));
 
-const io = new Server(PORT, {
+const app = express();
+const server = http.createServer(app);
+
+const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
+    origin: CLIENT_ORIGIN,
     methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
-io.on("connection", socket => {
-  
-    socket.on("get-all-documents", async () => {
-      const allDocuments = await getAllDocuments() ;
-      allDocuments.reverse() ; // To get most recent docs first.
-      socket.emit("all-documents", allDocuments) ;
-    })
+app.use(
+  cors({
+    origin: CLIENT_ORIGIN,
+    credentials: true,
+  })
+);
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
+app.use(mongoSanitize());
 
-    socket.on("get-document", async ( { documentId, documentName } ) => {
-      socket.join(documentId) ;
-      const document = await findOrCreateDocument({ documentId, documentName }) ;
+app.use("/api/auth", authRoutes);
+app.use("/api/docs", documentRoutes);
 
-      if(document)
-        socket.emit("load-document", document.data) ;
+app.use(errorHandler);
 
-      socket.on("send-changes", delta => {
-        socket.broadcast.to(documentId).emit("receive-changes", delta) ;
-      });
+registerDocumentHandlers(io);
 
-      socket.on("save-document", async (data) => {
-        await updateDocument(documentId, { data }) ;
-      })
-
-    })
-
-})
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});

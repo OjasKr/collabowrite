@@ -1,4 +1,6 @@
-import { Button } from "@/components/ui/button"
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -7,40 +9,48 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import Img2 from "../assets/Create-New-Image.png"
-import { useNavigate } from "react-router-dom"
-import { v4 as uuidV4 } from "uuid" 
-import { useState } from "react"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import Img2 from "../assets/Create-New-Image.png";
+import { docsApi } from "@/lib/api";
 
-export function Dialogbox() {
-  const navigate = useNavigate() ;
-  const [docName, setDocName] = useState<string>("") ;
-    const createDoc = (docId: string) => {
-      navigate(`/documents/${docId}`) ;
+export function Dialogbox({ onCreated }: { onCreated?: () => void }) {
+  const navigate = useNavigate();
+  const [docName, setDocName] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    try {
+      const { data } = await docsApi.create(docName.trim() || "Untitled");
+      const id = data.document?._id;
+      if (id) {
+        onCreated?.();
+        navigate(`/documents/${id}`);
+      }
+    } catch {
+      // error handled by interceptor or show toast
+    } finally {
+      setLoading(false);
     }
-    const handleSubmit = () => {
-      const id = uuidV4() ;
-      localStorage.setItem(`document-name-for-${id}`, docName) ;      
-      createDoc(id) ;
-    }
+  };
+
   return (
-    <div className="border p-2 bg-white border-gray-300 h-[200px] w-[160px] rounded-md hover:border-blue-600">
-        <Dialog>
+    <div className="border p-2 bg-card border-border h-[200px] w-[160px] rounded-md hover:border-primary">
+      <Dialog>
         <DialogTrigger asChild>
           <img
-              className="h-full w-full cursor-pointer"
-              src={Img2}
-              alt="createImg"
+            className="h-full w-full cursor-pointer object-cover rounded"
+            src={Img2}
+            alt="Create new document"
           />
         </DialogTrigger>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Create a new document</DialogTitle>
             <DialogDescription>
-              Enter a name for your document. Click create when you're done.
+              Enter a name for your document. Click create when you&apos;re done.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -50,18 +60,20 @@ export function Dialogbox() {
               </Label>
               <Input
                 id="name"
-                defaultValue="Pedro Duarte"
                 className="col-span-3"
+                placeholder="Untitled"
                 value={docName}
-                onChange={(e) => { setDocName(e.target.value); }}
+                onChange={(e) => setDocName(e.target.value)}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button style={{"backgroundColor": "rgb(10, 110, 209)"}} type="submit" onClick={handleSubmit}>Create</Button>
+            <Button type="button" onClick={handleSubmit} disabled={loading}>
+              {loading ? "Creating..." : "Create"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }
