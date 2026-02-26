@@ -2,6 +2,33 @@
   background-color: #F3F3F3;
 }
 
+/* Remote collaborator cursors (Google Docs style) */
+.collab-cursors-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.collab-cursor {
+  position: absolute;
+  pointer-events: none;
+  transition: left 0.05s ease-out, top 0.05s ease-out;
+}
+
+.collab-cursor-label {
+  position: absolute;
+  left: 0;
+  top: -20px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+
 .editorContainer .ql-editor {
   /* A4 size */
   width: 21cm;

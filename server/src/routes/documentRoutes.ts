@@ -1,6 +1,7 @@
 "use strict";
 
 import { Router } from "express";
+import multer from "multer";
 import { requireAuth } from "../middleware/requireAuth";
 import { checkDocAccess } from "../middleware/checkDocAccess";
 import { checkEditPermission } from "../middleware/checkEditPermission";
@@ -31,8 +32,10 @@ import {
   addComment,
   deleteComment,
 } from "../controllers/documentController";
+import { uploadImage } from "../controllers/upload.controller";
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 router.use(requireAuth);
 
@@ -42,6 +45,7 @@ router.get("/recent", listRecentlyEdited);
 router.get("/starred", listStarred);
 router.get("/trash", listTrashed);
 router.post("/", createDocument);
+router.post("/upload-image", upload.single("image"), uploadImage);
 
 /* More specific :id sub-routes must come before the generic GET /:id */
 router.post("/:id/star", checkDocAccess, starDocument);

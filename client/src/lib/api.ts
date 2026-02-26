@@ -104,4 +104,16 @@ export const docsApi = {
   delete: (id: string, soft = true) =>
     api.delete(`/docs/${id}`, { params: { soft: soft ? "true" : "false" } }),
   copy: (id: string) => api.post(`/docs/${id}/copy`),
+  uploadImage: (file: File) => {
+    const form = new FormData();
+    form.append("image", file);
+    return api.post<{ success: boolean; url?: string; message?: string }>("/docs/upload-image", form, {
+      transformRequest: [
+        (data, headers) => {
+          if (headers) delete headers["Content-Type"];
+          return data;
+        },
+      ],
+    });
+  },
 };

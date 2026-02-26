@@ -5,9 +5,20 @@ import "quill/dist/quill.snow.css";
 import { io, Socket } from "socket.io-client";
 import { TOOLBAR_OPTIONS } from "../constants";
 import { docsApi } from "../lib/api";
+import { aiApi } from "../lib/ai";
 import { useAuth } from "../context/AuthContext";
+import { EditorAITools, type AIToolType } from "../components/EditorAITools";
+import { EditorChatPanel } from "../components/EditorChatPanel";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 
 const SAVE_DEBOUNCE_MS = 2500;
+const AI_DEBOUNCE_MS = 300;
+const MAX_AI_TEXT_LENGTH = 3000;
 
 type DocRole = "owner" | "editor" | "viewer";
 
@@ -48,7 +59,22 @@ export const Editor = () => {
   const [newCommentText, setNewCommentText] = useState("");
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [addCommentLoading, setAddCommentLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiModalContent, setAiModalContent] = useState("");
+  const [aiModalCanReplace, setAiModalCanReplace] = useState(false);
+  const [toneBadge, setToneBadge] = useState<string | null>(null);
+  const [remoteCursors, setRemoteCursors] = useState<Record<string, { index: number; length: number }>>({});
+  const [cursorLayoutVersion, setCursorLayoutVersion] = useState(0);
+  const aiDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const cursorOverlayRef = useRef<HTMLDivElement | null>(null);
+  const cursorEmitThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCursorRef = useRef<{ index: number; length: number } | null>(null);
+
+  useEffect(() => () => {
+    if (aiDebounceRef.current) clearTimeout(aiDebounceRef.current);
+  }, []);
   const editorModeBoxRef = useRef<HTMLDivElement | null>(null);
   const quillInitialized = useRef(false);
   const roleRef = useRef<DocRole | null>(null);
@@ -189,6 +215,7 @@ export const Editor = () => {
       if (!wrapper || quillInitialized.current) return;
       wrapper.innerHTML = "";
       const editor = document.createElement("div");
+      editor.style.position = "relative";
       wrapper.append(editor);
       const q = new Quill(editor, {
         theme: "snow",
@@ -196,6 +223,11 @@ export const Editor = () => {
       });
       q.disable();
       q.setText("Loading...");
+      const overlay = document.createElement("div");
+      overlay.setAttribute("data-collab-cursors", "true");
+      overlay.className = "collab-cursors-overlay";
+      editor.appendChild(overlay);
+      cursorOverlayRef.current = overlay;
       setQuill(q);
       quillInitialized.current = true;
     },
@@ -209,6 +241,14 @@ export const Editor = () => {
 
     socket.on("load-document", (content: object) => {
       quill.setContents(content as Parameters<Quill["setContents"]>[0]);
+      setCursorLayoutVersion((v) => v + 1);
+      queueMicrotask(() => {
+        const sel = quill.getSelection();
+        if (sel != null) {
+          lastCursorRef.current = { index: sel.index, length: sel.length ?? 0 };
+          socket.emit("cursor-position", { index: sel.index, length: sel.length ?? 0 });
+        }
+      });
     });
 
     socket.on("document-error", () => {
@@ -216,7 +256,24 @@ export const Editor = () => {
     });
 
     socket.on("active-users", (users: ActiveUser[]) => {
-      setActiveUsers(Array.isArray(users) ? users : []);
+      const list = Array.isArray(users) ? users : [];
+      setActiveUsers(list);
+      setRemoteCursors((prev) => {
+        const ids = new Set(list.map((u) => u._id));
+        const next = { ...prev };
+        Object.keys(next).forEach((userId) => {
+          if (!ids.has(userId)) delete next[userId];
+        });
+        return next;
+      });
+    });
+
+    socket.on("cursor-update", (payload: { userId?: string; index?: number; length?: number }) => {
+      const userId = payload?.userId;
+      if (!userId || userId === user?.id) return;
+      const index = typeof payload?.index === "number" && payload.index >= 0 ? payload.index : 0;
+      const length = typeof payload?.length === "number" && payload.length >= 0 ? payload.length : 0;
+      setRemoteCursors((prev) => ({ ...prev, [userId]: { index, length } }));
     });
 
     socket.on("document-saved", () => {
@@ -233,6 +290,7 @@ export const Editor = () => {
 
     const receiveHandler = (delta: unknown) => {
       quill.updateContents(delta as Parameters<Quill["updateContents"]>[0]);
+      setCursorLayoutVersion((v) => v + 1);
     };
     socket.on("receive-changes", receiveHandler);
 
@@ -244,17 +302,43 @@ export const Editor = () => {
     };
     quill.on("text-change", emitTyping);
 
+    const bumpCursorLayout = () => setCursorLayoutVersion((v) => v + 1);
+    quill.on("text-change", bumpCursorLayout);
+
+    const emitCursorPosition = () => {
+      const sel = quill.getSelection();
+      if (sel == null) return;
+      const index = sel.index;
+      const length = sel.length ?? 0;
+      if (lastCursorRef.current?.index === index && lastCursorRef.current?.length === length) return;
+      lastCursorRef.current = { index, length };
+      socket.emit("cursor-position", { index, length });
+    };
+
+    const selectionChangeHandler = () => {
+      if (cursorEmitThrottleRef.current) return;
+      emitCursorPosition();
+      cursorEmitThrottleRef.current = setTimeout(() => {
+        cursorEmitThrottleRef.current = null;
+      }, 80);
+    };
+    quill.on("selection-change", selectionChangeHandler);
+
     return () => {
       if (typingTimer) clearTimeout(typingTimer);
+      if (cursorEmitThrottleRef.current) clearTimeout(cursorEmitThrottleRef.current);
       quill.off("text-change", emitTyping);
+      quill.off("text-change", bumpCursorLayout);
       quill.off("text-change", textChangeHandler);
+      quill.off("selection-change", selectionChangeHandler);
       socket.off("receive-changes", receiveHandler);
+      socket.off("cursor-update");
       socket.off("load-document");
       socket.off("document-error");
       socket.off("active-users");
       socket.off("document-saved");
     };
-  }, [socket, quill, documentId, navigate]);
+  }, [socket, quill, documentId, navigate, user?.id]);
 
   useEffect(() => {
     if (!quill || role === null) return;
@@ -265,6 +349,87 @@ export const Editor = () => {
       quill.disable();
     }
   }, [quill, role, editorMode]);
+
+  useEffect(() => {
+    if (!quill || (role !== "owner" && role !== "editor")) return;
+    const toolbar = quill.getModule("toolbar") as { addHandler?: (name: string, handler: () => void) => void } | undefined;
+    if (!toolbar?.addHandler) return;
+
+    const imageHandler = () => {
+      const range = quill.getSelection(true);
+      const index = range?.index ?? quill.getLength();
+      const input = document.createElement("input");
+      input.setAttribute("type", "file");
+      input.setAttribute("accept", "image/jpeg,image/png,image/gif,image/webp");
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          const { data } = await docsApi.uploadImage(file);
+          const url = data?.url;
+          if (url) {
+            quill.insertEmbed(index, "image", url, "user");
+            quill.setSelection(index + 1);
+          }
+        } catch {
+          // error handled by api interceptor
+        }
+      };
+      input.click();
+    };
+
+    toolbar.addHandler("image", imageHandler);
+  }, [quill, role]);
+
+  useEffect(() => {
+    const overlay = cursorOverlayRef.current;
+    if (!overlay || !quill) return;
+    overlay.innerHTML = "";
+    const docLen = Math.max(0, quill.getLength() - 1);
+    const getDisplayName = (userId: string) => {
+      if (userId === user?.id) return "You";
+      const u = activeUsers.find((a) => a._id === userId);
+      return u?.name || u?.email || "Someone";
+    };
+    const hueForUserId = (userId: string) => {
+      let h = 0;
+      for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+      return h % 360;
+    };
+    Object.entries(remoteCursors).forEach(([userId, cursor]) => {
+      if (userId === user?.id) return;
+      const index = Math.min(Math.max(0, cursor.index), docLen);
+      const length = Math.max(0, cursor.length ?? 0);
+      try {
+        const bounds = quill.getBounds(index, length);
+        if (!bounds) return;
+        const hue = hueForUserId(userId);
+        const color = `hsl(${hue}, 70%, 45%)`;
+        const name = getDisplayName(userId);
+        const el = document.createElement("div");
+        el.className = "collab-cursor";
+        el.setAttribute("data-user-id", userId);
+        el.style.position = "absolute";
+        el.style.left = `${bounds.left}px`;
+        el.style.top = `${bounds.top}px`;
+        el.style.width = `${Math.max(2, bounds.width)}px`;
+        el.style.height = `${bounds.height}px`;
+        el.style.borderLeft = `2px solid ${color}`;
+        el.style.pointerEvents = "none";
+        if (length > 0) {
+          el.style.backgroundColor = `${color}20`;
+        }
+        const label = document.createElement("span");
+        label.className = "collab-cursor-label";
+        label.textContent = name;
+        label.style.cssText = `position:absolute;left:0;top:-20px;white-space:nowrap;font-size:11px;font-weight:600;color:${color};background:white;padding:1px 6px;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,0.15);pointer-events:none;`;
+        el.appendChild(label);
+        overlay.appendChild(el);
+      } catch {
+        // getBounds can throw if index invalid; skip
+      }
+    });
+  }, [quill, remoteCursors, cursorLayoutVersion, activeUsers, user?.id]);
 
   useEffect(() => {
     if (!editorModeSelectorOpen) return;
@@ -304,6 +469,80 @@ export const Editor = () => {
     }
   };
 
+  const handleAIAction = useCallback(
+    (type: AIToolType) => {
+      if (!quill || aiLoading) return;
+      const text = quill.getText().trim();
+      if (!text) return;
+      if (text.length > MAX_AI_TEXT_LENGTH) return;
+      if (aiDebounceRef.current) clearTimeout(aiDebounceRef.current);
+      aiDebounceRef.current = setTimeout(() => {
+        aiDebounceRef.current = null;
+        setAiLoading(true);
+        const run = async () => {
+          try {
+            let res;
+            switch (type) {
+              case "refine":
+                res = await aiApi.refine(text, documentId ?? undefined);
+                break;
+              case "rewrite":
+                res = await aiApi.rewrite(text, documentId ?? undefined);
+                break;
+              case "summarize":
+                res = await aiApi.summarize(text, documentId ?? undefined);
+                break;
+              case "expand":
+                res = await aiApi.expand(text, documentId ?? undefined);
+                break;
+              case "title":
+                res = await aiApi.generateTitle(text, documentId ?? undefined);
+                break;
+              case "tone":
+                res = await aiApi.detectTone(text, documentId ?? undefined);
+                break;
+              default:
+                setAiLoading(false);
+                return;
+            }
+            const result = (res?.data as { result?: string })?.result ?? "";
+            if (type === "tone") {
+              setToneBadge(result || null);
+            } else if (type === "title") {
+              if (result) {
+                setTitleInput(result);
+                setDocTitle(result);
+                if (documentId) {
+                  docsApi.updateTitle(documentId, result).catch(() => {});
+                }
+              }
+            } else if (type === "summarize") {
+              setAiModalContent(result);
+              setAiModalCanReplace(true);
+              setAiModalOpen(true);
+            } else {
+              quill.setText(result);
+            }
+          } catch {
+            // error handled by api interceptor / user sees failure
+          } finally {
+            setAiLoading(false);
+          }
+        };
+        run();
+      }, AI_DEBOUNCE_MS);
+    },
+    [quill, aiLoading, documentId]
+  );
+
+  const handleReplaceFromModal = () => {
+    if (!quill || !aiModalContent) return;
+    quill.setText(aiModalContent);
+    setAiModalOpen(false);
+    setAiModalContent("");
+    setAiModalCanReplace(false);
+  };
+
   const displayUsers: { _id: string; name?: string; email?: string; isYou?: boolean }[] = [
     ...(user?.id
       ? [{ _id: user.id, name: user.name, email: user.email, isYou: true as const }]
@@ -340,6 +579,11 @@ export const Editor = () => {
               className="bg-transparent border-none p-0 text-sm font-medium text-slate-900 dark:text-white focus:ring-0 w-48 sm:w-64 md:w-80 truncate hover:bg-slate-100 dark:hover:bg-white/5 rounded px-1 transition-colors disabled:opacity-70"
             />
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 px-1 flex items-center gap-2 flex-wrap">
+              {toneBadge && (
+                <span className="inline-flex items-center rounded-md bg-primary/10 text-primary px-2 py-0.5 text-xs font-medium">
+                  Tone: {toneBadge}
+                </span>
+              )}
               {saving ? "Saving..." : saved ? "Saved to cloud" : "Unsaved changes"}
               {role === "owner" && (
                 <>
@@ -400,6 +644,51 @@ export const Editor = () => {
           >
             <span className="material-symbols-outlined text-[20px]">comment</span>
           </button>
+          {(role === "owner" || role === "editor") && editorMode === "edit" && (
+            <EditorAITools
+              onSelect={handleAIAction}
+              loading={aiLoading}
+            />
+          )}
+          <div
+            ref={editorModeBoxRef}
+            role={role === "owner" || role === "editor" ? "button" : undefined}
+            tabIndex={role === "owner" || role === "editor" ? 0 : undefined}
+            onClick={() => (role === "owner" || role === "editor" ? setEditorModeSelectorOpen((o) => !o) : undefined)}
+            onKeyDown={(e) => {
+              if ((role === "owner" || role === "editor") && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                setEditorModeSelectorOpen((o) => !o);
+              }
+            }}
+            className={`flex items-center gap-2 rounded-lg border border-slate-200 dark:border-border-dark px-3 py-2 text-sm ${role === "owner" || role === "editor" ? "cursor-pointer bg-slate-50 dark:bg-white/5 hover:bg-slate-100 dark:hover:bg-white/10" : "bg-slate-50 dark:bg-white/5"}`}
+          >
+            <span className="material-symbols-outlined text-slate-500 dark:text-slate-400 text-[18px]">
+              {role === "viewer" || editorMode === "view" ? "visibility" : "edit"}
+            </span>
+            <span className="text-slate-700 dark:text-slate-200 font-medium">
+              {role === "viewer" ? "Viewing" : editorMode === "edit" ? "Editing" : "Viewing"}
+            </span>
+            {(role === "owner" || role === "editor") && (
+              <>
+                {editorModeSelectorOpen ? (
+                  <select
+                    value={editorMode}
+                    onChange={(e) => setEditorMode(e.target.value as "view" | "edit")}
+                    className="ml-1 rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <option value="view">View</option>
+                    <option value="edit">Edit</option>
+                  </select>
+                ) : (
+                  <span className="material-symbols-outlined text-slate-400 dark:text-slate-500 text-[16px]">
+                    expand_more
+                  </span>
+                )}
+              </>
+            )}
+          </div>
           {role === "owner" && (
             <div className="relative">
               <button
@@ -539,6 +828,29 @@ export const Editor = () => {
         </div>
       </header>
 
+      {/* AI result modal */}
+      <Dialog open={aiModalOpen} onOpenChange={setAiModalOpen}>
+        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>AI Result</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-slate-200 dark:border-border-dark bg-slate-50 dark:bg-surface-dark/50 p-4 text-sm text-slate-900 dark:text-slate-100 whitespace-pre-wrap">
+            {aiModalContent}
+          </div>
+          <div className="flex justify-end gap-2 pt-4">
+            {aiModalCanReplace && (
+              <button
+                type="button"
+                onClick={handleReplaceFromModal}
+                className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 transition-colors"
+              >
+                Replace content
+              </button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Version history panel */}
       {versionHistoryOpen && (
         <>
@@ -671,59 +983,17 @@ export const Editor = () => {
         </div>
       )}
 
-      {/* Main: optional outline sidebar + editor + optional comments */}
+      {/* Main: chat sidebar + editor */}
       <main className="flex-1 flex overflow-hidden relative min-h-0">
-        <aside className="w-64 border-r border-slate-200 dark:border-border-dark bg-white/50 dark:bg-surface-dark/30 backdrop-blur-sm hidden lg:flex flex-col py-6 px-4 shrink-0">
-          <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4 px-2">
-            Outline
-          </h3>
-          <nav className="space-y-1 text-sm text-slate-600 dark:text-slate-400">
-            <p className="px-2 py-1.5 text-slate-400 dark:text-slate-500">No headings yet</p>
-          </nav>
-          <div
-            ref={editorModeBoxRef}
-            role={role === "owner" || role === "editor" ? "button" : undefined}
-            tabIndex={role === "owner" || role === "editor" ? 0 : undefined}
-            onClick={() => (role === "owner" || role === "editor" ? setEditorModeSelectorOpen((o) => !o) : undefined)}
-            onKeyDown={(e) => {
-              if ((role === "owner" || role === "editor") && (e.key === "Enter" || e.key === " ")) {
-                e.preventDefault();
-                setEditorModeSelectorOpen((o) => !o);
-              }
+        <aside className="w-64 border-r border-slate-200 dark:border-border-dark bg-white/50 dark:bg-surface-dark/30 backdrop-blur-sm hidden lg:flex flex-col py-4 px-3 shrink-0 min-h-0">
+          <EditorChatPanel
+            onSendMessage={async (message, documentContext) => {
+              const { data } = await aiApi.chat(message, documentContext);
+              return (data as { result?: string })?.result ?? "";
             }}
-            className={`mt-auto p-3 rounded-lg border border-blue-100 dark:border-primary/20 ${role === "owner" || role === "editor" ? "cursor-pointer bg-blue-50 dark:bg-primary/10 hover:bg-blue-100/80 dark:hover:bg-primary/15" : "bg-blue-50 dark:bg-primary/10"}`}
-          >
-            <div className="flex items-start gap-3">
-              <span className="material-symbols-outlined text-primary text-xl mt-0.5 shrink-0">info</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-slate-900 dark:text-white mb-1">
-                  {role === "viewer" ? "Viewing" : editorMode === "edit" ? "Editing Mode" : "Viewing Mode"}
-                </p>
-                {role === "owner" || role === "editor" ? (
-                  <>
-                    {editorModeSelectorOpen && (
-                      <select
-                        value={editorMode}
-                        onChange={(e) => setEditorMode(e.target.value as "view" | "edit")}
-                        className="mt-1 w-full rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <option value="view">View</option>
-                        <option value="edit">Edit</option>
-                      </select>
-                    )}
-                    <p className="text-[11px] leading-tight text-slate-600 dark:text-slate-400 mt-2">
-                      {editorMode === "edit" ? "Changes are automatically saved." : "Switch to Edit to make changes."}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-[11px] leading-tight text-slate-600 dark:text-slate-400">
-                    You can view this document.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
+            getDocumentContext={() => (quill ? quill.getText().trim() : "")}
+            disabled={!(role === "owner" || role === "editor")}
+          />
         </aside>
 
         <div className="flex-1 overflow-y-auto relative scroll-smooth bg-background-light dark:bg-background-dark min-w-0 flex flex-col">

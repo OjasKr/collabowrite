@@ -31,6 +31,8 @@ A production-style collaborative document editor (Google Docs–like) built with
    - `CLIENT_ORIGIN` (e.g. `http://localhost:5173`)
    - `JWT_ACCESS_SECRET` (min 32 chars)
    - `JWT_REFRESH_SECRET` (min 32 chars)
+   - `GOOGLE_GENERATIVE_AI_API_KEY` (required for AI features; get a free key at https://aistudio.google.com/app/apikey)
+   - `GEMINI_MODEL` (optional; default `gemini-2.0-flash`. If you get a 404, try `gemini-pro`.)
 3. `npm run dev` (runs with tsx watch).
 
 ### Frontend (client)
