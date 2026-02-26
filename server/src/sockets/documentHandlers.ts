@@ -78,7 +78,11 @@ export const registerDocumentHandlers = (io: Server): void => {
               const users = await User.find({ _id: { $in: Array.from(set) } })
                 .select("_id name email")
                 .lean();
-              io.to(socket.docId).emit("active-users", users);
+              io.to(socket.docId).emit("active-users", users.map((u) => ({
+                _id: u._id,
+                name: u.name,
+                email: u.email,
+              })));
             }
           }
         }
@@ -94,7 +98,11 @@ export const registerDocumentHandlers = (io: Server): void => {
         const users = await User.find({ _id: { $in: userIds } })
           .select("_id name email")
           .lean();
-        io.to(docId).emit("active-users", users);
+        io.to(docId).emit("active-users", users.map((u) => ({
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+        })));
         socket.emit("load-document", doc.content);
 
         socket.on("send-changes", (delta: object) => {
@@ -167,7 +175,11 @@ export const registerDocumentHandlers = (io: Server): void => {
             const users = await User.find({ _id: { $in: Array.from(set) } })
               .select("_id name email")
               .lean();
-            io.to(docId).emit("active-users", users);
+            io.to(docId).emit("active-users", users.map((u) => ({
+              _id: u._id,
+              name: u.name,
+              email: u.email,
+            })));
           }
         }
       }

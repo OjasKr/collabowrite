@@ -6,7 +6,7 @@ import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Dashboard } from "./pages/Dashboard";
 import { Editor } from "./pages/Editor";
-import { DocumentSettings } from "./pages/DocumentSettings";
+import { Profile } from "./pages/Profile";
 import { NotFound } from "./pages/NotFound";
 
 function App() {
@@ -26,18 +26,18 @@ function App() {
               }
             />
             <Route
-              path="/documents/:id"
+              path="/profile"
               element={
                 <ProtectedRoute>
-                  <Editor />
+                  <Profile />
                 </ProtectedRoute>
               }
             />
             <Route
-              path="/documents/:id/settings"
+              path="/documents/:id"
               element={
                 <ProtectedRoute>
-                  <DocumentSettings />
+                  <Editor />
                 </ProtectedRoute>
               }
             />

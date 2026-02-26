@@ -12,7 +12,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  avatar?: string;
+  bio?: string;
   createdAt?: string;
 }
 
@@ -72,7 +72,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               id: user.id,
               name: user.name,
               email: user.email,
-              avatar: user.avatar,
+              bio: user.bio,
               createdAt: user.createdAt,
             },
             loading: false,
@@ -100,10 +100,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             id: user.id,
             name: user.name,
             email: user.email,
-            avatar: user.avatar,
+            bio: user.bio,
           },
           loading: false,
-            authenticated: true,
+          authenticated: true,
         });
       }
     },
@@ -123,7 +123,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             id: user.id,
             name: user.name,
             email: user.email,
-            avatar: user.avatar,
+            bio: user.bio,
           },
           loading: false,
           authenticated: true,
@@ -134,7 +134,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const setUser = useCallback((user: User | null) => {
-    setState((s) => ({ ...s, user, authenticated: !!user }));
+    setState((s) => ({
+      ...s,
+      user: user ? { ...user } : null,
+      authenticated: !!user,
+    }));
   }, []);
 
   const value: AuthContextValue = {

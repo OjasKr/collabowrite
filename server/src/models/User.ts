@@ -6,7 +6,7 @@ export interface IUser {
   name: string;
   email: string;
   password: string;
-  avatar?: string;
+  bio?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema<IUser>(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, select: false },
-    avatar: { type: String, default: undefined },
+    bio: { type: String, default: undefined, trim: true },
   },
   { timestamps: true }
 );

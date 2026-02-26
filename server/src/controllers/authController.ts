@@ -56,7 +56,7 @@ export const register = [
       res.cookie(REFRESH_COOKIE_NAME, refreshToken, COOKIE_OPTIONS);
       res.status(201).json({
         success: true,
-        user: { id: user._id, name: user.name, email: user.email, avatar: user.avatar },
+        user: { id: user._id, name: user.name, email: user.email },
         accessToken,
         expiresIn: 900,
       });
@@ -92,7 +92,7 @@ export const login = [
       res.cookie(REFRESH_COOKIE_NAME, refreshToken, COOKIE_OPTIONS);
       res.json({
         success: true,
-        user: { id: user._id, name: user.name, email: user.email, avatar: user.avatar },
+        user: { id: user._id, name: user.name, email: user.email },
         accessToken,
         expiresIn: 900,
       });
@@ -112,7 +112,7 @@ export const refresh = async (req: Request, res: Response, next: NextFunction): 
       token,
       process.env.JWT_REFRESH_SECRET || "refresh-secret"
     ) as { userId: string };
-    const user = await User.findById(decoded.userId).select("_id email name avatar").lean();
+    const user = await User.findById(decoded.userId).select("_id email name").lean();
     if (!user) {
       throw new AppError("User not found.", 401);
     }
@@ -123,7 +123,7 @@ export const refresh = async (req: Request, res: Response, next: NextFunction): 
     );
     res.json({
       success: true,
-      user: { id: user._id, name: user.name, email: user.email, avatar: user.avatar },
+      user: { id: user._id, name: user.name, email: user.email },
       accessToken,
       expiresIn: 900,
     });
@@ -148,7 +148,7 @@ export const me = async (req: Request, res: Response, next: NextFunction): Promi
       throw new AppError("Authentication required.", 401);
     }
     const user = await User.findById(authReq.user.id)
-      .select("name email avatar createdAt")
+      .select("name email bio createdAt")
       .lean();
     if (!user) {
       throw new AppError("User not found.", 404);
@@ -159,7 +159,7 @@ export const me = async (req: Request, res: Response, next: NextFunction): Promi
         id: user._id,
         name: user.name,
         email: user.email,
-        avatar: user.avatar,
+        bio: user.bio,
         createdAt: user.createdAt,
       },
     });
@@ -167,3 +167,81 @@ export const me = async (req: Request, res: Response, next: NextFunction): Promi
     next(e);
   }
 };
+
+export const updateProfileValidators = [
+  body("name").optional().trim().notEmpty().withMessage("Name cannot be empty."),
+  body("bio").optional().trim(),
+];
+
+export const updateProfile = [
+  validateRequest(updateProfileValidators),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const authReq = req as import("../middleware/requireAuth").AuthenticatedRequest;
+      const userId = authReq.user?.id;
+      if (!userId) {
+        throw new AppError("Authentication required.", 401);
+      }
+      const { name, bio } = req.body;
+      const update: { name?: string; bio?: string } = {};
+      if (name !== undefined) update.name = name;
+      if (bio !== undefined) update.bio = bio;
+      const user = await User.findByIdAndUpdate(
+        userId,
+        { $set: update },
+        { new: true, runValidators: true }
+      )
+        .select("name email bio createdAt")
+        .lean();
+      if (!user) {
+        throw new AppError("User not found.", 404);
+      }
+      res.json({
+        success: true,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          bio: user.bio,
+          createdAt: user.createdAt,
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+];
+
+export const changePasswordValidators = [
+  body("currentPassword").notEmpty().withMessage("Current password is required."),
+  body("newPassword")
+    .isLength({ min: 8 })
+    .withMessage("New password must be at least 8 characters."),
+];
+
+export const changePassword = [
+  validateRequest(changePasswordValidators),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const authReq = req as import("../middleware/requireAuth").AuthenticatedRequest;
+      const userId = authReq.user?.id;
+      if (!userId) {
+        throw new AppError("Authentication required.", 401);
+      }
+      const { currentPassword, newPassword } = req.body;
+      const user = await User.findById(userId).select("+password").lean();
+      if (!user || !user.password) {
+        throw new AppError("User not found.", 404);
+      }
+      const match = await bcrypt.compare(currentPassword, user.password);
+      if (!match) {
+        throw new AppError("Current password is incorrect.", 401);
+      }
+      const hashed = await bcrypt.hash(newPassword, 12);
+      await User.findByIdAndUpdate(userId, { $set: { password: hashed } });
+      res.json({ success: true, message: "Password updated." });
+    } catch (e) {
+      next(e);
+    }
+  },
+];

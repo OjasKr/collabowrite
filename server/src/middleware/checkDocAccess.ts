@@ -48,7 +48,7 @@ export const checkDocAccess = async (
     }
     if (doc.isPublic) {
       req.doc = doc as DocAccessRequest["doc"];
-      req.docRole = "viewer";
+      req.docRole = (doc.publicRole === "editor" ? "editor" : "viewer") as DocAccessRole;
       next();
       return;
     }
