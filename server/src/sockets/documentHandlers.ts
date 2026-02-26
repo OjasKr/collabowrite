@@ -5,9 +5,26 @@ import { Server, Socket } from "socket.io";
 import jwt from "jsonwebtoken";
 import { Document } from "../models/Document";
 import { User } from "../models/User";
+import { generateAIResponse } from "../utils/ai.service";
 
 const SAVE_DEBOUNCE_MS = 2500;
 const MAX_VERSIONS = 10;
+const MAX_AI_TEXT_LENGTH = 3000;
+
+const AI_PROMPTS: Record<string, (text: string) => string> = {
+  refine: (t) =>
+    `Improve the following text for grammar and clarity. Keep the same meaning and tone. Output only the improved text, no explanations.\n\n${t}`,
+  summarize: (t) =>
+    `Summarize the following text as bullet points. Be concise. Output only the bullet list, no intro or outro.\n\n${t}`,
+  rewrite: (t) =>
+    `Rewrite the following text in a professional, formal tone. Keep the same meaning. Output only the rewritten text.\n\n${t}`,
+  expand: (t) =>
+    `Expand the following text with more detail and explanation. Keep the same tone and style. Output only the expanded text.\n\n${t}`,
+  title: (t) =>
+    `Suggest a short, clear document title (max 10 words) based on the following content. Output only the title, nothing else.\n\n${t}`,
+  tone: (t) =>
+    `Identify the tone of the following text in one or two words (e.g. Formal, Casual, Persuasive, Informative, Friendly). Output only the tone label(s), nothing else.\n\n${t}`,
+};
 
 interface AuthPayload {
   userId: string;
@@ -78,7 +95,11 @@ export const registerDocumentHandlers = (io: Server): void => {
               const users = await User.find({ _id: { $in: Array.from(set) } })
                 .select("_id name email")
                 .lean();
-              io.to(socket.docId).emit("active-users", users);
+              io.to(socket.docId).emit("active-users", users.map((u) => ({
+                _id: u._id,
+                name: u.name,
+                email: u.email,
+              })));
             }
           }
         }
@@ -94,7 +115,11 @@ export const registerDocumentHandlers = (io: Server): void => {
         const users = await User.find({ _id: { $in: userIds } })
           .select("_id name email")
           .lean();
-        io.to(docId).emit("active-users", users);
+        io.to(docId).emit("active-users", users.map((u) => ({
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+        })));
         socket.emit("load-document", doc.content);
 
         socket.on("send-changes", (delta: object) => {
@@ -103,6 +128,58 @@ export const registerDocumentHandlers = (io: Server): void => {
 
         socket.on("typing", () => {
           socket.broadcast.to(docId).emit("user-typing", { userId: socket.userId });
+        });
+
+        socket.on("cursor-position", (payload: { index?: number; length?: number }) => {
+          const index = typeof payload?.index === "number" && payload.index >= 0 ? payload.index : 0;
+          const length = typeof payload?.length === "number" && payload.length >= 0 ? payload.length : 0;
+          socket.broadcast.to(docId).emit("cursor-update", {
+            userId: socket.userId,
+            index,
+            length,
+          });
+        });
+
+        socket.on("request-ai-suggestion", async (payload: { type?: string; text?: string }) => {
+          const type = typeof payload?.type === "string" ? payload.type : "";
+          const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+          if (!type || !AI_PROMPTS[type]) {
+            socket.emit("ai-suggestion", { error: "Invalid AI request type." });
+            return;
+          }
+          if (!text || text.length > MAX_AI_TEXT_LENGTH) {
+            socket.emit("ai-suggestion", {
+              error: text.length > MAX_AI_TEXT_LENGTH
+                ? `Text must be at most ${MAX_AI_TEXT_LENGTH} characters.`
+                : "Text is required.",
+            });
+            return;
+          }
+          try {
+            const doc = await Document.findById(docId).lean();
+            if (!doc) {
+              socket.emit("ai-suggestion", { error: "Document not found." });
+              return;
+            }
+            const ownerId = (doc.owner as unknown as string)?.toString?.() ?? (doc.owner as unknown as { _id: string })?._id?.toString?.();
+            const isEditor =
+              ownerId === socket.userId ||
+              doc.collaborators?.some(
+                (c) =>
+                  (c.user as unknown as string)?.toString?.() === socket.userId &&
+                  c.role === "editor"
+              );
+            if (!isEditor) {
+              socket.emit("ai-suggestion", { error: "Edit access required." });
+              return;
+            }
+            const prompt = AI_PROMPTS[type](text);
+            const result = await generateAIResponse(prompt, socket.userId ?? undefined);
+            socket.emit("ai-suggestion", { type, result });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "AI request failed.";
+            socket.emit("ai-suggestion", { error: message });
+          }
         });
 
         socket.on("save-document", (content: object) => {
@@ -167,7 +244,11 @@ export const registerDocumentHandlers = (io: Server): void => {
             const users = await User.find({ _id: { $in: Array.from(set) } })
               .select("_id name email")
               .lean();
-            io.to(docId).emit("active-users", users);
+            io.to(docId).emit("active-users", users.map((u) => ({
+              _id: u._id,
+              name: u.name,
+              email: u.email,
+            })));
           }
         }
       }

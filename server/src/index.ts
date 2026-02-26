@@ -13,6 +13,7 @@ import mongoSanitize from "express-mongo-sanitize";
 import { errorHandler } from "./middleware/errorHandler";
 import authRoutes from "./routes/authRoutes";
 import documentRoutes from "./routes/documentRoutes";
+import aiRoutes from "./routes/ai.routes";
 import { registerDocumentHandlers } from "./sockets/documentHandlers";
 
 dotenv.config();
@@ -49,6 +50,7 @@ app.use(mongoSanitize());
 
 app.use("/api/auth", authRoutes);
 app.use("/api/docs", documentRoutes);
+app.use("/api/ai", aiRoutes);
 
 app.use(errorHandler);
 

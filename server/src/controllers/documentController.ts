@@ -2,14 +2,33 @@
 
 import { Response, NextFunction } from "express";
 import mongoose from "mongoose";
+import { Comment } from "../models/Comment";
 import { Document } from "../models/Document";
 import { DocumentVersion } from "../models/DocumentVersion";
+import { StarredDoc } from "../models/StarredDoc";
 import { User } from "../models/User";
 import { AppError } from "../utils/errors";
 import { DocAccessRequest } from "../middleware/checkDocAccess";
 
 const DEFAULT_CONTENT = { ops: [] };
 const MAX_VERSIONS = 10;
+
+export const listTrashed = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const docs = await Document.find({ owner: userId, deletedAt: { $ne: undefined } })
+      .sort({ deletedAt: -1 })
+      .select("title owner version updatedAt deletedAt lastEditedBy")
+      .lean();
+    res.json({ success: true, documents: docs });
+  } catch (e) {
+    next(e);
+  }
+};
 
 export const listMyDocuments = async (
   req: DocAccessRequest,
@@ -82,6 +101,67 @@ export const listRecentlyEdited = async (
       .select("title owner version updatedAt lastEditedBy")
       .lean();
     res.json({ success: true, documents: docs });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const listStarred = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const starred = await StarredDoc.find({ user: userId })
+      .select("document")
+      .lean();
+    const docIds = starred.map((s) => s.document);
+    const docs = await Document.find({
+      _id: { $in: docIds },
+      deletedAt: undefined,
+    })
+      .sort({ updatedAt: -1 })
+      .select("title owner collaborators version updatedAt lastEditedBy")
+      .populate("owner", "name email")
+      .lean();
+    res.json({ success: true, documents: docs });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const starDocument = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    const userId = req.user!.id;
+    const doc = req.doc;
+    if (!doc) throw new AppError("Document not found.", 404);
+    await StarredDoc.findOneAndUpdate(
+      { user: userId, document: docId },
+      { user: userId, document: docId },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true, starred: true });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const unstarDocument = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    const userId = req.user!.id;
+    await StarredDoc.deleteOne({ user: userId, document: docId });
+    res.json({ success: true, starred: false });
   } catch (e) {
     next(e);
   }
@@ -253,6 +333,32 @@ export const restoreVersion = async (
   }
 };
 
+export const setVisibility = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    if (req.docRole !== "owner") {
+      throw new AppError("Only the owner can change link sharing.", 403);
+    }
+    const isPublic = req.body.isPublic === true;
+    const publicRole = req.body.publicRole === "editor" ? "editor" : "viewer";
+    await Document.findByIdAndUpdate(docId, {
+      isPublic,
+      publicRole,
+      updatedAt: new Date(),
+    });
+    const updated = await Document.findById(docId)
+      .select("isPublic publicRole")
+      .lean();
+    res.json({ success: true, isPublic: updated?.isPublic, publicRole: updated?.publicRole });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const shareDocument = async (
   req: DocAccessRequest,
   res: Response,
@@ -365,8 +471,59 @@ export const deleteDocument = async (
     } else {
       await Document.findByIdAndDelete(docId);
       await DocumentVersion.deleteMany({ document: docId });
+      await StarredDoc.deleteMany({ document: docId });
       res.json({ success: true, message: "Document deleted permanently." });
     }
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const restoreDocument = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    const userId = req.user!.id;
+    const doc = await Document.findById(docId).select("owner deletedAt").lean();
+    if (!doc) throw new AppError("Document not found.", 404);
+    const ownerId = String(doc.owner);
+    if (ownerId !== userId) throw new AppError("Only the owner can restore this document.", 403);
+    if (!doc.deletedAt) throw new AppError("Document is not in trash.", 400);
+    await Document.findByIdAndUpdate(docId, {
+      $unset: { deletedAt: "" },
+      $set: { updatedAt: new Date() },
+    });
+    const updated = await Document.findById(docId)
+      .select("title owner version updatedAt _id")
+      .populate("owner", "name email")
+      .lean();
+    res.json({ success: true, document: updated });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const permanentDeleteDocument = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    const userId = req.user!.id;
+    const doc = await Document.findById(docId).select("owner deletedAt").lean();
+    if (!doc) throw new AppError("Document not found.", 404);
+    const ownerId = String(doc.owner);
+    if (ownerId !== userId) throw new AppError("Only the owner can permanently delete this document.", 403);
+    if (!doc.deletedAt) throw new AppError("Document must be in trash before permanent delete.", 400);
+    await Document.findByIdAndDelete(docId);
+    await DocumentVersion.deleteMany({ document: docId });
+    await StarredDoc.deleteMany({ document: docId });
+    await Comment.deleteMany({ document: docId });
+    res.json({ success: true, message: "Document deleted permanently." });
   } catch (e) {
     next(e);
   }
@@ -396,6 +553,72 @@ export const copyDocument = async (
       .populate("owner", "name email")
       .lean();
     res.status(201).json({ success: true, document: populated });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const listComments = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    const comments = await Comment.find({ document: docId })
+      .sort({ createdAt: 1 })
+      .populate("user", "name email")
+      .lean();
+    res.json({ success: true, comments });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const addComment = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    const userId = req.user!.id;
+    const content = (req.body.content as string)?.trim();
+    if (!content) throw new AppError("Comment content is required.", 400);
+    const comment = await Comment.create({
+      document: docId,
+      user: userId,
+      content,
+    });
+    const populated = await Comment.findById(comment._id)
+      .populate("user", "name email")
+      .lean();
+    res.status(201).json({ success: true, comment: populated });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const deleteComment = async (
+  req: DocAccessRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const docId = req.params.id;
+    const commentId = req.params.commentId;
+    const userId = req.user!.id;
+    const comment = await Comment.findOne({ _id: commentId, document: docId }).lean();
+    if (!comment) throw new AppError("Comment not found.", 404);
+    const doc = await Document.findById(docId).select("owner").lean();
+    if (!doc) throw new AppError("Document not found.", 404);
+    const ownerId = String(doc.owner);
+    const commentUserId = String(comment.user);
+    if (commentUserId !== userId && ownerId !== userId) {
+      throw new AppError("You can only delete your own comments.", 403);
+    }
+    await Comment.deleteOne({ _id: commentId, document: docId });
+    res.json({ success: true });
   } catch (e) {
     next(e);
   }

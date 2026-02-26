@@ -17,15 +17,27 @@ module.exports = {
       },
     },
     extend: {
+      fontFamily: {
+        display: ["Inter", "sans-serif"],
+      },
       colors: {
+        "background-light": "#f6f6f8",
+        "background-dark": "#101022",
+        "card-dark": "#1a1a2e",
+        "hover-dark": "#252542",
+        "text-secondary": "#9d9db9",
+        "surface-dark": "#18182f",
+        "surface-dark-lighter": "#242442",
+        "surface-highlight": "#282839",
+        "border-dark": "#282839",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         primary: {
-          DEFAULT: "hsl(var(--primary))",
-          foreground: "hsl(var(--primary-foreground))",
+          DEFAULT: "#1313ec",
+          foreground: "#ffffff",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",

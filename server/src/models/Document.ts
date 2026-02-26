@@ -15,6 +15,7 @@ export interface IDocument {
   owner: mongoose.Types.ObjectId;
   collaborators: ICollaborator[];
   isPublic: boolean;
+  publicRole: "viewer" | "editor";
   version: number;
   lastEditedBy?: mongoose.Types.ObjectId;
   deletedAt?: Date;
@@ -37,6 +38,7 @@ const documentSchema = new mongoose.Schema<IDocument>(
     owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     collaborators: { type: [collaboratorSchema], default: [] },
     isPublic: { type: Boolean, default: false },
+    publicRole: { type: String, enum: ["viewer", "editor"], default: "viewer" },
     version: { type: Number, default: 1 },
     lastEditedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     deletedAt: { type: Date, default: undefined },

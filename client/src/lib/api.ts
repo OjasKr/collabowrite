@@ -61,6 +61,10 @@ export const authApi = {
   refresh: () => api.post("/auth/refresh", {}, { withCredentials: true }),
   logout: () => api.post("/auth/logout", {}, { withCredentials: true }),
   me: () => api.get("/auth/me"),
+  updateProfile: (data: { name?: string; bio?: string }) =>
+    api.patch("/auth/me", data),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post("/auth/change-password", { currentPassword, newPassword }),
 };
 
 export const docsApi = {
@@ -70,6 +74,12 @@ export const docsApi = {
     api.get("/docs/shared", { params }),
   listRecent: (params?: { limit?: number }) =>
     api.get("/docs/recent", { params }),
+  listStarred: () => api.get("/docs/starred"),
+  listTrash: () => api.get("/docs/trash"),
+  restore: (id: string) => api.post(`/docs/${id}/restore`),
+  permanentDelete: (id: string) => api.post(`/docs/${id}/permanent-delete`),
+  star: (id: string) => api.post(`/docs/${id}/star`),
+  unstar: (id: string) => api.delete(`/docs/${id}/star`),
   create: (title?: string) => api.post("/docs", { title: title || "Untitled" }),
   get: (id: string) => api.get(`/docs/${id}`),
   updateContent: (id: string, content: object) =>
@@ -79,12 +89,31 @@ export const docsApi = {
   getVersions: (id: string) => api.get(`/docs/${id}/versions`),
   restoreVersion: (id: string, versionId: string) =>
     api.post(`/docs/${id}/versions/${versionId}/restore`),
+  listComments: (id: string) => api.get(`/docs/${id}/comments`),
+  addComment: (id: string, content: string) =>
+    api.post(`/docs/${id}/comments`, { content }),
+  deleteComment: (id: string, commentId: string) =>
+    api.delete(`/docs/${id}/comments/${commentId}`),
   share: (id: string, email: string, role: "viewer" | "editor") =>
     api.post(`/docs/${id}/share`, { email, role }),
   unshare: (id: string, userId: string) =>
     api.delete(`/docs/${id}/share/${userId}`),
   getCollaborators: (id: string) => api.get(`/docs/${id}/collaborators`),
+  setVisibility: (id: string, isPublic: boolean, publicRole: "viewer" | "editor") =>
+    api.patch(`/docs/${id}/visibility`, { isPublic, publicRole }),
   delete: (id: string, soft = true) =>
     api.delete(`/docs/${id}`, { params: { soft: soft ? "true" : "false" } }),
   copy: (id: string) => api.post(`/docs/${id}/copy`),
+  uploadImage: (file: File) => {
+    const form = new FormData();
+    form.append("image", file);
+    return api.post<{ success: boolean; url?: string; message?: string }>("/docs/upload-image", form, {
+      transformRequest: [
+        (data, headers) => {
+          if (headers) delete headers["Content-Type"];
+          return data;
+        },
+      ],
+    });
+  },
 };

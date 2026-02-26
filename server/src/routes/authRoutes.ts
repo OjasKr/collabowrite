@@ -8,6 +8,8 @@ import {
   refresh,
   logout,
   me,
+  updateProfile,
+  changePassword,
 } from "../controllers/authController";
 import { requireAuth } from "../middleware/requireAuth";
 
@@ -26,5 +28,7 @@ router.post("/login", loginLimiter, login);
 router.post("/refresh", refresh);
 router.post("/logout", logout);
 router.get("/me", requireAuth, me);
+router.patch("/me", requireAuth, ...updateProfile);
+router.post("/change-password", requireAuth, ...changePassword);
 
 export default router;

@@ -71,6 +71,29 @@
       @apply border-border;
     }
     body {
-      @apply bg-background text-foreground;
+      @apply bg-background text-foreground font-display antialiased;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+    }
+    .material-symbols-outlined.filled {
+      font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
+    }
+    .mesh-gradient {
+      background-color: #101022;
+      background-image:
+        radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%),
+        radial-gradient(at 50% 0%, hsla(242, 100%, 35%, 1) 0, transparent 50%),
+        radial-gradient(at 100% 0%, hsla(250, 100%, 50%, 0.5) 0, transparent 50%),
+        radial-gradient(at 0% 50%, hsla(242, 100%, 35%, 0.8) 0, transparent 50%),
+        radial-gradient(at 100% 50%, hsla(260, 100%, 60%, 0.5) 0, transparent 50%),
+        radial-gradient(at 0% 100%, hsla(250, 100%, 50%, 0.8) 0, transparent 50%),
+        radial-gradient(at 100% 100%, hsla(242, 100%, 35%, 1) 0, transparent 50%);
+    }
+    .glass-card {
+      background: rgba(24, 24, 47, 0.6);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
   }
